@@ -23,48 +23,48 @@
 #include <vector>
 #include <stdlib.h>
  
-OPENALPRC_DLL_EXPORT OPENALPR* openalpr_init(const char* country, const char* configFile, const char* runtimeDir)
+OPENALPR* openalpr_init(const char* country, const char* configFile, const char* runtimeDir)
 {
   alpr::Alpr* alpr_inst = new alpr::Alpr(country, configFile, runtimeDir);
   
   return (OPENALPR*) alpr_inst;
 }
 
-OPENALPRC_DLL_EXPORT int openalpr_is_loaded(OPENALPR* instance)
+int openalpr_is_loaded(OPENALPR* instance)
 {
   return (int) ((alpr::Alpr*) instance)->isLoaded();
 }
 
 // Set the country used for plate recognition
-OPENALPRC_DLL_EXPORT void openalpr_set_country(OPENALPR* instance, const char* country)
+void openalpr_set_country(OPENALPR* instance, const char* country)
 {
   ((alpr::Alpr*) instance)->setCountry(country);
 }
 
 // Update the prewarp setting without reloading the library
-OPENALPRC_DLL_EXPORT void openalpr_set_prewarp(OPENALPR* instance, const char* prewarp_config)
+void openalpr_set_prewarp(OPENALPR* instance, const char* prewarp_config)
 {
   ((alpr::Alpr*) instance)->setPrewarp(prewarp_config);
 }
 
 // Update the detection mask without reloading the library
-OPENALPRC_DLL_EXPORT void openalpr_set_mask(OPENALPR* instance, unsigned char* pixelData, int bytesPerPixel, int imgWidth, int imgHeight)
+void openalpr_set_mask(OPENALPR* instance, unsigned char* pixelData, int bytesPerPixel, int imgWidth, int imgHeight)
 {
   ((alpr::Alpr*) instance)->setMask(pixelData, bytesPerPixel, imgWidth, imgHeight);
 }
 
 // Enable/disable region detection.  Pass a 0 or 1
-OPENALPRC_DLL_EXPORT void openalpr_set_detect_region(OPENALPR* instance, int detectRegion)
+void openalpr_set_detect_region(OPENALPR* instance, int detectRegion)
 {
   ((alpr::Alpr*) instance)->setDetectRegion(detectRegion);
 }
 
-OPENALPRC_DLL_EXPORT void openalpr_set_topn(OPENALPR* instance, int topN)
+void openalpr_set_topn(OPENALPR* instance, int topN)
 {
   ((alpr::Alpr*) instance)->setTopN(topN);
 }
 
-OPENALPRC_DLL_EXPORT void openalpr_set_default_region(OPENALPR* instance, const char* region)
+void openalpr_set_default_region(OPENALPR* instance, const char* region)
 {
   ((alpr::Alpr*) instance)->setDefaultRegion(region);
 }
@@ -73,7 +73,7 @@ OPENALPRC_DLL_EXPORT void openalpr_set_default_region(OPENALPR* instance, const 
 
 // Recognizes the provided image and responds with JSON.  
 // Caller must call free() on the returned object
-OPENALPRC_DLL_EXPORT char* openalpr_recognize_rawimage(OPENALPR* instance, unsigned char* pixelData, int bytesPerPixel, int imgWidth, int imgHeight, AlprCRegionOfInterest roi)
+char* openalpr_recognize_rawimage(OPENALPR* instance, unsigned char* pixelData, int bytesPerPixel, int imgWidth, int imgHeight, AlprCRegionOfInterest roi)
 {
   std::vector<alpr::AlprRegionOfInterest> rois;
   alpr::AlprRegionOfInterest cpproi(roi.x, roi.y, roi.width, roi.height);
@@ -88,7 +88,7 @@ OPENALPRC_DLL_EXPORT char* openalpr_recognize_rawimage(OPENALPR* instance, unsig
   
 }
 
-OPENALPRC_DLL_EXPORT char* openalpr_recognize_encodedimage(OPENALPR* instance, unsigned char* bytes, long long length, AlprCRegionOfInterest roi)
+char* openalpr_recognize_encodedimage(OPENALPR* instance, unsigned char* bytes, long long length, AlprCRegionOfInterest roi)
 {
   std::vector<alpr::AlprRegionOfInterest> rois;
   alpr::AlprRegionOfInterest cpproi(roi.x, roi.y, roi.width, roi.height);
@@ -106,12 +106,12 @@ OPENALPRC_DLL_EXPORT char* openalpr_recognize_encodedimage(OPENALPR* instance, u
 }
 
 
-OPENALPRC_DLL_EXPORT void openalpr_free_response_string(char* response)
+void openalpr_free_response_string(char* response)
 {
   free(response);
 }
 
-OPENALPRC_DLL_EXPORT void openalpr_cleanup(OPENALPR* instance)
+void openalpr_cleanup(OPENALPR* instance)
 {
   delete ((alpr::Alpr*) instance);
 }

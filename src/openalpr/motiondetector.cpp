@@ -1,4 +1,5 @@
 #include "motiondetector.h"
+#include <opencv2/imgproc/types_c.h>
 
 using namespace cv;
 

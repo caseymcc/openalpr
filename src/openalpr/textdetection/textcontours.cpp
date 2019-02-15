@@ -18,6 +18,7 @@
 */
 
 #include "textcontours.h"
+#include <opencv2/imgproc/types_c.h>
 
 using namespace std;
 using namespace cv;

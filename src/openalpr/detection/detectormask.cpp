@@ -19,6 +19,7 @@
 
 #include "detectormask.h"
 #include "prewarp.h"
+#include <opencv2/imgproc/types_c.h>
 
 using namespace cv;
 using namespace std;

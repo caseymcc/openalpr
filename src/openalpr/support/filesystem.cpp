@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <fstream>
 #include <string.h>
-
+#include <sstream>
 
 
 namespace alpr

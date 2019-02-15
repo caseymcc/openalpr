@@ -1,9 +1,19 @@
-project(src)
+cmake_minimum_required (VERSION 3.2)
+
+include("../cmake/HunterGate.cmake")
+
+HunterGate(
+    URL "https://github.com/ruslo/hunter/archive/v0.23.103.tar.gz"
+    SHA1 "0b8c31bfdf0fd2fa87b4f743aabcd73904afa256"
+)
+
+project(OpenAlpr)
 
 set(CMAKE_BUILD_TYPE RelWithDebugInfo)
 #set(CMAKE_BUILD_TYPE Debug)
 
-cmake_minimum_required (VERSION 2.6)
+hunter_add_package(OpenCV)
+hunter_add_package(Tesseract)
 
 # Set the OpenALPR version in cmake, and also add it as a DEFINE for the code to access
 SET(OPENALPR_MAJOR_VERSION "2")
@@ -77,7 +87,8 @@ IF(Tesseract_FRAMEWORK_PATH AND Leptonica_FRAMEWORK_PATH)
   SET(Tesseract_LIBRARIES "${Tesseract_FRAMEWORK_PATH};${Leptonica_FRAMEWORK_PATH}")
   SET(Tesseract_INCLUDE_DIRS "${Tesseract_FRAMEWORK_PATH}/Headers")
 ELSE()
-  FIND_PACKAGE( Tesseract REQUIRED )
+  FIND_PACKAGE( Tesseract REQUIRED CONFIG)
+  set(Tesseract_LIBRARIES Tesseract::libtesseract)
 ENDIF()
 
 include_directories(${Tesseract_INCLUDE_DIRS})
@@ -98,7 +109,7 @@ ELSE()
     /storage/projects/alpr/libraries/opencv/
     )
   # Opencv Package
-  FIND_PACKAGE( OpenCV REQUIRED )
+  FIND_PACKAGE( OpenCV REQUIRED CONFIG)
 ENDIF()
 
 IF (${OpenCV_VERSION} VERSION_LESS 2.4.7)

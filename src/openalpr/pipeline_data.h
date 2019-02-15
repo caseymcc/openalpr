@@ -3,6 +3,7 @@
 #define OPENALPR_PIPELINEDATA_H
 
 #include "opencv2/imgproc/imgproc.hpp"
+
 #include "utility.h"
 #include "config.h"
 #include "textdetection/textline.h"
