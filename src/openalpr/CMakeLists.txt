@@ -75,4 +75,8 @@ add_definitions(-DCOMPILE_GPU=1)
 ENDIF()
 
 # Add definition for default config file
+IF(WIN32)
+add_definitions(-DDEFAULT_CONFIG_FILE="openalpr.conf")
+ELSE()
 add_definitions(-DDEFAULT_CONFIG_FILE="${CMAKE_INSTALL_SYSCONFDIR}/openalpr/openalpr.conf")
+ENDIF()

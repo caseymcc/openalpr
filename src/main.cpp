@@ -45,7 +45,8 @@ MotionDetector motiondetector;
 bool do_motiondetection = true;
 
 /** Function Headers */
-bool detectandshow(Alpr* alpr, cv::Mat frame, std::string region, bool writeJson);
+bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, bool outputJson, bool outputJsonFormated);
+bool detectandshow(Alpr* alpr, cv::Mat frame, std::string region, bool writeJson, bool formated=false, std::string jsonFile="");
 bool is_supported_image(std::string image_file);
 
 bool measureProcessingTime = false;
@@ -60,6 +61,7 @@ int main( int argc, const char** argv )
   std::vector<std::string> filenames;
   std::string configFile = "";
   bool outputJson = false;
+  bool outputJsonFormated=false;
   int seektoms = 0;
   bool detectRegion = false;
   std::string country;
@@ -78,6 +80,7 @@ int main( int argc, const char** argv )
   TCLAP::ValueArg<int> topNArg("n","topn","Max number of possible plate numbers to return.  Default=10",false, 10 ,"topN");
 
   TCLAP::SwitchArg jsonSwitch("j","json","Output recognition results in JSON format.  Default=off", cmd, false);
+  TCLAP::SwitchArg jsonFormatedSwitch("f", "formated_json", "Output JSON results formated.  Default=off", cmd, false);
   TCLAP::SwitchArg debugSwitch("","debug","Enable debug output.  Default=off", cmd, false);
   TCLAP::SwitchArg detectRegionSwitch("d","detect_region","Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
   TCLAP::SwitchArg clockSwitch("","clock","Measure/print the total time to process image and all plates.  Default=off", cmd, false);
@@ -104,6 +107,7 @@ int main( int argc, const char** argv )
     country = countryCodeArg.getValue();
     seektoms = seekToMsArg.getValue();
     outputJson = jsonSwitch.getValue();
+    outputJsonFormated=jsonFormatedSwitch.getValue();
     debug_mode = debugSwitch.getValue();
     configFile = configFileArg.getValue();
     detectRegion = detectRegionSwitch.getValue();
@@ -158,7 +162,7 @@ int main( int argc, const char** argv )
       frame = cv::imdecode(cv::Mat(data), 1);
       if (!frame.empty())
       {
-        detectandshow(&alpr, frame, "", outputJson);
+        detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
       }
       else
       {
@@ -173,7 +177,7 @@ int main( int argc, const char** argv )
         if (fileExists(filename.c_str()))
         {
           frame = cv::imread(filename);
-          detectandshow(&alpr, frame, "", outputJson);
+          detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
         }
         else
         {
@@ -204,7 +208,7 @@ int main( int argc, const char** argv )
       {
         if (framenum == 0)
           motiondetector.ResetMotionDetection(&frame);
-        detectandshow(&alpr, frame, "", outputJson);
+        detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
         sleep_ms(10);
         framenum++;
       }
@@ -228,7 +232,7 @@ int main( int argc, const char** argv )
         {
           if (framenum == 0)
             motiondetector.ResetMotionDetection(&latestFrame);
-          detectandshow(&alpr, latestFrame, "", outputJson);
+          detectandshow(&alpr, latestFrame, "", outputJson, outputJsonFormated);
         }
 
         // Sleep 10ms
@@ -266,7 +270,7 @@ int main( int argc, const char** argv )
           
           if (framenum == 0)
             motiondetector.ResetMotionDetection(&frame);
-          detectandshow(&alpr, frame, "", outputJson);
+          detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
           //create a 1ms delay
           sleep_ms(1);
           framenum++;
@@ -283,7 +287,7 @@ int main( int argc, const char** argv )
       {
         frame = cv::imread(filename);
 
-        bool plate_found = detectandshow(&alpr, frame, "", outputJson);
+        bool plate_found = detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
 
         if (!plate_found && !outputJson)
           std::cout << "No license plates found." << std::endl;
@@ -295,27 +299,7 @@ int main( int argc, const char** argv )
     }
     else if (DirectoryExists(filename.c_str()))
     {
-      std::vector<std::string> files = getFilesInDir(filename.c_str());
-
-      std::sort(files.begin(), files.end(), stringCompare);
-
-      for (int i = 0; i < files.size(); i++)
-      {
-        if (is_supported_image(files[i]))
-        {
-          std::string fullpath = filename + "/" + files[i];
-          std::cout << fullpath << std::endl;
-          frame = cv::imread(fullpath.c_str());
-          if (detectandshow(&alpr, frame, "", outputJson))
-          {
-            //while ((char) cv::waitKey(50) != 'c') { }
-          }
-          else
-          {
-            //cv::waitKey(50);
-          }
-        }
-      }
+      processImageDirectory(alpr, frame, filename, outputJson, outputJsonFormated);
     }
     else
     {
@@ -327,6 +311,32 @@ int main( int argc, const char** argv )
   return 0;
 }
 
+bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, bool outputJson, bool outputJsonFormated)
+{
+    std::vector<std::string> files=getFilesInDir(directory.c_str());
+    bool result=true;
+    std::string jsonFile;
+
+    for(int i=0; i<files.size(); i++)
+    {
+        std::string fullpath=directory+"/"+files[i];
+
+        if(is_supported_image(fullpath))
+        {
+            jsonFile=directory+"/"+filenameWithoutExtension(files[i])+".json";
+            std::cout<<fullpath<<std::endl;
+            frame=cv::imread(fullpath.c_str());
+
+            detectandshow(&alpr, frame, "", outputJson, outputJsonFormated, jsonFile);
+        }
+        else if(DirectoryExists(fullpath.c_str()))
+        {
+            processImageDirectory(alpr, frame, fullpath, outputJson, outputJsonFormated);
+        }
+    }
+    return result;
+}
+
 bool is_supported_image(std::string image_file)
 {
   return (hasEndingInsensitive(image_file, ".png") || hasEndingInsensitive(image_file, ".jpg") || 
@@ -335,7 +345,7 @@ bool is_supported_image(std::string image_file)
 }
 
 
-bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJson)
+bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJson, bool formated, std::string jsonFile)
 {
 
   timespec startTime;
@@ -360,7 +370,19 @@ bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJso
   
   if (writeJson)
   {
-    std::cout << alpr->toJson( results ) << std::endl;
+    std::string json=alpr->toJson(results, formated);
+    std::cout << json << std::endl;
+
+    if(!jsonFile.empty())
+    {
+        FILE *file=fopen(jsonFile.c_str(), "w");
+
+        if(file)
+        {
+            fwrite(json.c_str(), sizeof(char), json.size(), file);
+            fclose(file);
+        }
+    }
   }
   else
   {
