@@ -17,14 +17,22 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define FIND_MEMORY_LEAK
+
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
+
+#ifdef FIND_MEMORY_LEAK
+#define _CRTDBG_MAP_ALLOC
+#include <stdlib.h>
+#include <crtdbg.h>
+#endif
+
 #include <cstdio>
 #include <sstream>
 #include <iostream>
 #include <iterator>
 #include <algorithm>
-
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
 
 #include "tclap/CmdLine.h"
 #include "support/filesystem.h"
@@ -55,9 +63,17 @@ std::string templatePattern;
 // This boolean is set to false when the user hits terminates (e.g., CTRL+C )
 // so we can end infinite loops for things like video processing.
 bool program_active = true;
+int processedImages = 0;
 
 int main( int argc, const char** argv )
 {
+#ifdef FIND_MEMORY_LEAK
+	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+
+//	_crtBreakAlloc = 165;
+	_CrtSetBreakAlloc(165);
+#endif
+
   std::vector<std::string> filenames;
   std::string configFile = "";
   bool outputJson = false;
@@ -67,7 +83,7 @@ int main( int argc, const char** argv )
   std::string country;
   int topn;
   bool debug_mode = false;
-
+  
   TCLAP::CmdLine cmd("OpenAlpr Command Line Utility", ' ', Alpr::getVersion());
 
   TCLAP::UnlabeledMultiArg<std::string>  fileArg( "image_file", "Image containing license plates", true, "", "image_file_path"  );
@@ -147,6 +163,9 @@ int main( int argc, const char** argv )
 
   for (unsigned int i = 0; i < filenames.size(); i++)
   {
+//	  if (processedImages > 10)
+//		  break;
+
     std::string filename = filenames[i];
 
     if (filename == "-")
@@ -319,13 +338,23 @@ bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, b
 
     for(int i=0; i<files.size(); i++)
     {
+//		if (processedImages > 10)
+//			break;
+
         std::string fullpath=directory+"/"+files[i];
 
         if(is_supported_image(fullpath))
         {
             jsonFile=directory+"/"+filenameWithoutExtension(files[i])+".json";
+
+			if(fileExists(jsonFile.c_str()))
+				continue;
+
             std::cout<<fullpath<<std::endl;
             frame=cv::imread(fullpath.c_str());
+
+			if (frame.data == NULL)
+				continue;
 
             detectandshow(&alpr, frame, "", outputJson, outputJsonFormated, jsonFile);
         }
@@ -367,7 +396,8 @@ bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJso
   if (measureProcessingTime)
     std::cout << "Total Time to process image: " << totalProcessingTime << "ms." << std::endl;
   
-  
+  processedImages++;
+
   if (writeJson)
   {
     std::string json=alpr->toJson(results, formated);
