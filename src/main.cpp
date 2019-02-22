@@ -81,7 +81,7 @@ struct Settings
 		std::string country;
 		int topn;
 		bool debug_mode = false;
-		int threads=1;
+		int numberOfThreads=1;
 	}
 };
 
@@ -89,289 +89,479 @@ struct ProcessRequest
 {
 	cv::Mat frame;
 	AlprResults results;
+    double processingTime;
 };
 
-int main( int argc, const char** argv )
+struct ThreadInfo
+{
+    ThreadInfo():inFlight(0){}
+
+    bool running;
+    std::vector<std::thread> threads;
+    std::condition_variable processEvent;
+    
+    //processed in main thread only, not anywhere else
+    std::vector<ProcessRequest> processRequests;
+    std::vector<ProcessRequest *> freeRequest;
+    int inFlight;
+
+    //the following should always be guarded by the lock
+    std::mutex processMutex;
+    std::deque<ProcessRequest *> queued;
+    std::deque<ProcessRequest *> completed;
+};
+
+//thread functions
+void startProcessThreads(Settings &settings, ThreadInfo &threadInfo);
+void processThread(const Settings &settings, ThreadInfo &threadInfo);
+
+
+int main(int argc, const char** argv)
 {
 #ifdef FIND_MEMORY_LEAK
-	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|_CRTDBG_LEAK_CHECK_DF);
 
-//	_crtBreakAlloc = 165;
-	_CrtSetBreakAlloc(165);
+    //	_crtBreakAlloc = 165;
+    _CrtSetBreakAlloc(165);
 #endif
 
-  std::vector<std::string> filenames;
-//  std::string configFile = "";
-//  bool outputJson = false;
-//  bool outputJsonFormated=false;
-//  int seektoms = 0;
-//  bool detectRegion = false;
-//  std::string country;
-//  int topn;
-//  bool debug_mode = false;
-  
-  TCLAP::CmdLine cmd("OpenAlpr Command Line Utility", ' ', Alpr::getVersion());
-  TCLAP::UnlabeledMultiArg<std::string>  fileArg( "image_file", "Image containing license plates", true, "", "image_file_path"  );
-  TCLAP::ValueArg<std::string> countryCodeArg("c", "country", "Country code to identify (either us for USA or eu for Europe).  Default=us", false, "us", "country_code");
-  TCLAP::ValueArg<int> seekToMsArg("", "seek", "Seek to the specified millisecond in a video file. Default=0", false, 0, "integer_ms");
-  TCLAP::ValueArg<std::string> configFileArg("", "config", "Path to the openalpr.conf file", false, "", "config_file");
-  TCLAP::ValueArg<std::string> templatePatternArg("p", "pattern", "Attempt to match the plate number against a plate pattern (e.g., md for Maryland, ca for California)", false, "", "pattern code");
-  TCLAP::ValueArg<int> topNArg("n", "topn", "Max number of possible plate numbers to return.  Default=10", false, 10, "topN");
-  TCLAP::ValueArg<int> threads("t", "threads", "Number of threads to use.  Default=2", false, 2, "threads");
+    std::vector<std::string> filenames;
+    Settings settings;
+    ThreadInfo threadInfo;
 
-  TCLAP::SwitchArg jsonSwitch("j", "json", "Output recognition results in JSON format.  Default=off", cmd, false);
-  TCLAP::SwitchArg jsonFormatedSwitch("f", "formated_json", "Output JSON results formated.  Default=off", cmd, false);
-  TCLAP::SwitchArg debugSwitch("", "debug", "Enable debug output.  Default=off", cmd, false);
-  TCLAP::SwitchArg detectRegionSwitch("d", "detect_region", "Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
-  TCLAP::SwitchArg clockSwitch("", "clock", "Measure/print the total time to process image and all plates.  Default=off", cmd, false);
-  TCLAP::SwitchArg motiondetect("", "motion", "Use motion detection on video file or stream.  Default=off", cmd, false);
+    //  std::string configFile = "";
+    //  bool outputJson = false;
+    //  bool outputJsonFormated=false;
+    //  int seektoms = 0;
+    //  bool detectRegion = false;
+    //  std::string country;
+    //  int topn;
+    //  bool debug_mode = false;
 
-  Settings settings;
+    TCLAP::CmdLine cmd("OpenAlpr Command Line Utility", ' ', Alpr::getVersion());
+    TCLAP::UnlabeledMultiArg<std::string>  fileArg("image_file", "Image containing license plates", true, "", "image_file_path");
+    TCLAP::ValueArg<std::string> countryCodeArg("c", "country", "Country code to identify (either us for USA or eu for Europe).  Default=us", false, "us", "country_code");
+    TCLAP::ValueArg<int> seekToMsArg("", "seek", "Seek to the specified millisecond in a video file. Default=0", false, 0, "integer_ms");
+    TCLAP::ValueArg<std::string> configFileArg("", "config", "Path to the openalpr.conf file", false, "", "config_file");
+    TCLAP::ValueArg<std::string> templatePatternArg("p", "pattern", "Attempt to match the plate number against a plate pattern (e.g., md for Maryland, ca for California)", false, "", "pattern code");
+    TCLAP::ValueArg<int> topNArg("n", "topn", "Max number of possible plate numbers to return.  Default=10", false, 10, "topN");
+    TCLAP::ValueArg<int> numberOfThreads("t", "threads", "Number of threads to use.  Default=2", false, 2, "threads");
 
-  try
-  {
-    cmd.add( templatePatternArg );
-    cmd.add( seekToMsArg );
-    cmd.add( topNArg );
-    cmd.add( configFileArg );
-    cmd.add( fileArg );
-    cmd.add( countryCodeArg );
+    TCLAP::SwitchArg jsonSwitch("j", "json", "Output recognition results in JSON format.  Default=off", cmd, false);
+    TCLAP::SwitchArg jsonFormatedSwitch("f", "formated_json", "Output JSON results formated.  Default=off", cmd, false);
+    TCLAP::SwitchArg debugSwitch("", "debug", "Enable debug output.  Default=off", cmd, false);
+    TCLAP::SwitchArg detectRegionSwitch("d", "detect_region", "Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
+    TCLAP::SwitchArg clockSwitch("", "clock", "Measure/print the total time to process image and all plates.  Default=off", cmd, false);
+    TCLAP::SwitchArg motiondetect("", "motion", "Use motion detection on video file or stream.  Default=off", cmd, false);
 
-    
-    if (cmd.parse( argc, argv ) == false)
+    try
     {
-      // Error occurred while parsing.  Exit now.
-      return 1;
-    }
+        cmd.add(templatePatternArg);
+        cmd.add(seekToMsArg);
+        cmd.add(topNArg);
+        cmd.add(configFileArg);
+        cmd.add(fileArg);
+        cmd.add(countryCodeArg);
 
-    filenames = fileArg.getValue();
 
-    settings.country = countryCodeArg.getValue();
-    settings.seektoms = seekToMsArg.getValue();
-    settings.outputJson = jsonSwitch.getValue();
-    settings.outputJsonFormated=jsonFormatedSwitch.getValue();
-    settings.debug_mode = debugSwitch.getValue();
-    settings.configFile = configFileArg.getValue();
-    settings.detectRegion = detectRegionSwitch.getValue();
-    settings.templatePattern = templatePatternArg.getValue();
-    settings.topn = topNArg.getValue();
-    measureProcessingTime = clockSwitch.getValue();
-	do_motiondetection = motiondetect.getValue();
-  }
-  catch (TCLAP::ArgException &e)    // catch any exceptions
-  {
-    std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl;
-    return 1;
-  }
-
-  
-//  cv::Mat frame;
-//
-//  Alpr alpr(country, configFile);
-//  alpr.setTopN(topn);
-//  
-//  if (debug_mode)
-//  {
-//    alpr.getConfig()->setDebug(true);
-//  }
-//
-//  if (detectRegion)
-//    alpr.setDetectRegion(detectRegion);
-//
-//  if (templatePattern.empty() == false)
-//    alpr.setDefaultRegion(templatePattern);
-//
-//  if (alpr.isLoaded() == false)
-//  {
-//    std::cerr << "Error loading OpenALPR" << std::endl;
-//    return 1;
-//  }
-  
-  for (unsigned int i = 0; i < filenames.size(); i++)
-  {
-//	  if (processedImages > 10)
-//		  break;
-
-    std::string filename = filenames[i];
-
-    if (filename == "-")
-    {
-      std::vector<uchar> data;
-      int c;
-
-      while ((c = fgetc(stdin)) != EOF)
-      {
-        data.push_back((uchar) c);
-      }
-
-      frame = cv::imdecode(cv::Mat(data), 1);
-      if (!frame.empty())
-      {
-        detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
-      }
-      else
-      {
-        std::cerr << "Image invalid: " << filename << std::endl;
-      }
-    }
-    else if (filename == "stdin")
-    {
-      std::string filename;
-      while (std::getline(std::cin, filename))
-      {
-        if (fileExists(filename.c_str()))
+        if(cmd.parse(argc, argv)==false)
         {
-          frame = cv::imread(filename);
-          detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
-        }
-        else
-        {
-          std::cerr << "Image file not found: " << filename << std::endl;
+            // Error occurred while parsing.  Exit now.
+            return 1;
         }
 
-      }
+        filenames=fileArg.getValue();
+
+        settings.country=countryCodeArg.getValue();
+        settings.seektoms=seekToMsArg.getValue();
+        settings.outputJson=jsonSwitch.getValue();
+        settings.outputJsonFormated=jsonFormatedSwitch.getValue();
+        settings.debug_mode=debugSwitch.getValue();
+        settings.configFile=configFileArg.getValue();
+        settings.detectRegion=detectRegionSwitch.getValue();
+        settings.templatePattern=templatePatternArg.getValue();
+        settings.topn=topNArg.getValue();
+        settings.numberOfThreads=numberOfThreads.getValue();
+        measureProcessingTime=clockSwitch.getValue();
+        do_motiondetection=motiondetect.getValue();
     }
-    else if (filename == "webcam" || startsWith(filename, WEBCAM_PREFIX))
+    catch(TCLAP::ArgException &e)    // catch any exceptions
     {
-      int webcamnumber = 0;
-      
-      // If they supplied "/dev/video[number]" parse the "number" here
-      if(startsWith(filename, WEBCAM_PREFIX) && filename.length() > WEBCAM_PREFIX.length())
-      {
-        webcamnumber = atoi(filename.substr(WEBCAM_PREFIX.length()).c_str());
-      }
-      
-      int framenum = 0;
-      cv::VideoCapture cap(webcamnumber);
-      if (!cap.isOpened())
-      {
-        std::cerr << "Error opening webcam" << std::endl;
+        std::cerr<<"error: "<<e.error()<<" for arg "<<e.argId()<<std::endl;
         return 1;
-      }
-
-      while (cap.read(frame))
-      {
-        if (framenum == 0)
-          motiondetector.ResetMotionDetection(&frame);
-        detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
-        sleep_ms(10);
-        framenum++;
-      }
     }
-    else if (startsWith(filename, "http://") || startsWith(filename, "https://"))
+
+
+
+    //  cv::Mat frame;
+    //
+    //  Alpr alpr(country, configFile);
+    //  alpr.setTopN(topn);
+    //  
+    //  if (debug_mode)
+    //  {
+    //    alpr.getConfig()->setDebug(true);
+    //  }
+    //
+    //  if (detectRegion)
+    //    alpr.setDetectRegion(detectRegion);
+    //
+    //  if (templatePattern.empty() == false)
+    //    alpr.setDefaultRegion(templatePattern);
+    //
+    //  if (alpr.isLoaded() == false)
+    //  {
+    //    std::cerr << "Error loading OpenALPR" << std::endl;
+    //    return 1;
+    //  }
+    startProcessThreads(settings, threadInfo);
+
+    size_t fileIndex=0;
+
+    std::deque<ProcessRequest *> completed;
+    while(true)
     {
-      int framenum = 0;
+        ProcessRequest *request=getRequest();
 
-      VideoBuffer videoBuffer;
-
-      videoBuffer.connect(filename, 5);
-
-      cv::Mat latestFrame;
-
-      while (program_active)
-      {
-        std::vector<cv::Rect> regionsOfInterest;
-        int response = videoBuffer.getLatestFrame(&latestFrame, regionsOfInterest);
-
-        if (response != -1)
         {
-          if (framenum == 0)
-            motiondetector.ResetMotionDetection(&latestFrame);
-          detectandshow(&alpr, latestFrame, "", outputJson, outputJsonFormated);
+            std::unique_lock<std::mutex> lock(threadInfo.processMutex);
+
+            if(!threadInfo.completed.empty())
+            {
+                completed.insert(completed.end(), threadInfo.completed.begin(), threadInfo.completed.end());
+                threadInfo.inFlight-=threadInfo.completed.size();
+                threadInfo.completed.clear();
+            }
+
+            if(request!=nullptr)
+            {
+                threadInfo.queued.push_back(request);
+                threadInfo.inFlight++;
+                request=nullptr;
+            }
         }
 
-        // Sleep 10ms
-        sleep_ms(10);
-        framenum++;
-      }
+        if()
 
-      videoBuffer.disconnect();
-
-      std::cout << "Video processing ended" << std::endl;
     }
-    else if (hasEndingInsensitive(filename, ".avi") || hasEndingInsensitive(filename, ".mp4") ||
-                                                       hasEndingInsensitive(filename, ".webm") ||
-                                                       hasEndingInsensitive(filename, ".flv") || hasEndingInsensitive(filename, ".mjpg") ||
-                                                       hasEndingInsensitive(filename, ".mjpeg") ||
-             hasEndingInsensitive(filename, ".mkv")
-        )
-    {
-      if (fileExists(filename.c_str()))
-      {
-        int framenum = 0;
+}
 
-        cv::VideoCapture cap = cv::VideoCapture();
+enum MediaType
+{
+    unknown,
+    init,
+    buffer,
+    stdin_,
+    webcam,
+    url,
+    video,
+    image,
+    directory
+};
+
+struct CustomState
+{
+};
+
+struct WebCamState:CustomState
+{
+    WebCamState():opened(false) {}
+
+    bool opened;
+    cv::VideoCapture cap;
+    int framenum;
+};
+
+struct UrlState:CustomState
+{
+    UrlState():connected(false) {}
+    ~UrlState() { if(connected) videoBuffer.disconnect(); }
+    
+    bool connected;
+    VideoBuffer videoBuffer;
+    int framenum;
+};
+
+struct State
+{
+    size_t fileNameIndex;
+    std::vector<std::string> fileNames;
+    std::vector<std::shared_ptr<CustomState>> stack;
+
+    MediaType type;
+};
+
+bool isVideo(std::string fileName)
+{
+    if(hasEndingInsensitive(fileName, ".avi")||hasEndingInsensitive(fileName, ".mp4")||
+        hasEndingInsensitive(fileName, ".webm")||
+        hasEndingInsensitive(fileName, ".flv")||hasEndingInsensitive(fileName, ".mjpg")||
+        hasEndingInsensitive(fileName, ".mjpeg")||
+        hasEndingInsensitive(fileName, ".mkv")
+        )
+        return true;
+    return false;
+}
+
+MediaType getMediaType(std::string &input)
+{
+    if(input=="-")
+        return MediaType::buffer;
+    else if(input=="stdin")
+        return MediaType::stdin_;
+    else if(input=="webcam"||startsWith(input, WEBCAM_PREFIX))
+        return MediaType::webcam;
+    else if(startsWith(input, "http://")||startsWith(input, "https://"))
+        return MediaType::url;
+    else if(isVideo(input))
+        return MediaType::video;
+    else if(is_supported_image(input))
+        return MediaType::image;
+    else if(DirectoryExists(input.c_str()))
+        return MediaType::directory;
+    return MediaType::unknown;
+}
+
+bool getBuffer(CustomState *state, std::string &input, ProcessRequest *request)
+{
+    std::vector<uchar> data;
+    int c;
+
+    while((c=fgetc(stdin))!=EOF)
+    {
+        data.push_back((uchar)c);
+    }
+
+    request->frame=cv::imdecode(cv::Mat(data), 1);
+    if(request->frame.empty())
+    {
+        std::cerr<<"Image invalid: "<<input<<std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool getStdIn(CustomState *state, std::string &input, ProcessRequest *request)
+{
+    std::string fileName;
+
+    if(!std::getline(std::cin, fileName))
+        return false;
+
+    if(!fileExists(fileName.c_str()))
+    {
+        std::cerr<<"Image file not found: "<<fileName<<std::endl;
+        return false;
+    }
+
+    request->frame=cv::imread(fileName);
+    
+    if(request->frame.empty())
+    {
+        std::cerr<<"Image invalid: "<<fileName<<std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool getWebCam(WebCamState *state, std::string &input, ProcessRequest *request)
+{
+    if(!state->opened)
+    {
+        int webcamnumber=0;
+
+        // If they supplied "/dev/video[number]" parse the "number" here
+        if(startsWith(input, WEBCAM_PREFIX)&&input.length() > WEBCAM_PREFIX.length())
+        {
+            webcamnumber=atoi(input.substr(WEBCAM_PREFIX.length()).c_str());
+        }
+
+        state->cap.open(webcamnumber);
+
+        if(!state->cap.isOpened())
+        {
+            std::cerr<<"Error opening webcam"<<std::endl;
+            return false;
+        }
+
+        state->opened=true;
+        state->framenum=0;
+    }
+
+    if(!state->cap.read(request->frame))
+    {
+        std::cerr<<"Error opening webcam"<<std::endl;
+        return false;
+    }
+
+    if(state->framenum==0)
+        motiondetector.ResetMotionDetection(&request->frame);
+    state->framenum++;
+}
+
+bool getUrl(UrlState *state, std::string &input, ProcessRequest *request)
+{
+    if(!state->connected)
+    {
+        state->videoBuffer.connect(input, 5);
+        state->connected=true;
+        state->framenum=0;
+    }
+
+    std::vector<cv::Rect> regionsOfInterest;
+    int response=state->videoBuffer.getLatestFrame(&request->frame, regionsOfInterest);
+
+    if(response==-1)
+        return false;
+
+    if(framenum==0)
+        motiondetector.ResetMotionDetection(&request->frame);
+    state->framenum++;
+    return true;
+}
+
+bool getVideo(UrlState *state, std::string &input, ProcessRequest *request)
+{
+    if(fileExists(filename.c_str()))
+    {
+        int framenum=0;
+
+        cv::VideoCapture cap=cv::VideoCapture();
         cap.open(filename);
         cap.set(cv::CAP_PROP_POS_MSEC, seektoms);
 
-        while (cap.read(frame))
+        while(cap.read(frame))
         {
-          if (SAVE_LAST_VIDEO_STILL)
-          {
-            cv::imwrite(LAST_VIDEO_STILL_LOCATION, frame);
-          }
-          if (!outputJson)
-            std::cout << "Frame: " << framenum << std::endl;
-          
-          if (framenum == 0)
-            motiondetector.ResetMotionDetection(&frame);
-          detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
-          //create a 1ms delay
-          sleep_ms(1);
-          framenum++;
+            if(SAVE_LAST_VIDEO_STILL)
+            {
+                cv::imwrite(LAST_VIDEO_STILL_LOCATION, frame);
+            }
+            if(!outputJson)
+                std::cout<<"Frame: "<<framenum<<std::endl;
+
+            if(framenum==0)
+                motiondetector.ResetMotionDetection(&frame);
+            detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
+            //create a 1ms delay
+            sleep_ms(1);
+            framenum++;
         }
-      }
-      else
-      {
-        std::cerr << "Video file not found: " << filename << std::endl;
-      }
-    }
-    else if (is_supported_image(filename))
-    {
-      if (fileExists(filename.c_str()))
-      {
-        frame = cv::imread(filename);
-
-        bool plate_found = detectandshow(&alpr, frame, "", outputJson, outputJsonFormated);
-
-        if (!plate_found && !outputJson)
-          std::cout << "No license plates found." << std::endl;
-      }
-      else
-      {
-        std::cerr << "Image file not found: " << filename << std::endl;
-      }
-    }
-    else if (DirectoryExists(filename.c_str()))
-    {
-      processImageDirectory(alpr, frame, filename, outputJson, outputJsonFormated);
     }
     else
     {
-      std::cerr << "Unknown file type" << std::endl;
-      return 1;
+        std::cerr<<"Video file not found: "<<filename<<std::endl;
     }
-  }
-
-  return 0;
 }
 
-void pr
+bool getImage(CustomState *state, std::string &input, ProcessRequest *request)
+{
+    if(!fileExists(input.c_str()))
+    {
+        std::cerr<<"Image file not found: "<<input<<std::endl;
+        return false;
+    }
 
-void processThread()
+    request->frame=cv::imread(input);
+
+    if(request->frame.empty())
+    {
+        std::cerr<<"Image invalid: "<<fileName<<std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool getDirectory(CustomState *state, std::string &input, ProcessRequest *request)
+{
+    processImageDirectory(alpr, frame, filename, outputJson, outputJsonFormated);
+}
+
+bool getRequest(State &state, ProcessRequest *request)
+{
+    for(size_t i=state.fileNameIndex; i<state.fileNames.size(); i++)
+    {
+        std::string fileName=fileNames[i];
+
+        if(state.type==MediaType::init)
+        {
+            state.type=getMediaType(fileName);
+
+            switch(state.type)
+            {
+            }
+        }
+
+        CustomState *currentState=&state.stateStack().back();
+
+        switch(state.type)
+        {
+        case MediaType::buffer:
+            if(getBuffer(currentState, fileName))
+                return true;
+            break;
+        case MediaType::stdin_:
+            if(getStdIn(currentState, fileName))
+                return true;
+            break;
+        case MediaType::webcam:
+            return getWebCam(currentState, fileName);
+            break;
+        case MediaType::url:
+            return getUrl(currentState, fileName);
+            break;
+        case MediaType::video:
+            return getVideo(currentState, fileName);
+            break;
+        case MediaType::image:
+            return getImage(currentState, fileName);
+            break;
+        case MediaType::directory:
+            return getDirectory(currentState, fileName);
+            break;
+        default:
+            std::cerr<<"Unknown file type"<<std::endl;
+            return false;
+            break;
+        }
+
+        state.type==MediaType::init;
+        if(!state.stack.empty())
+            state.stack.pop_back();
+
+        return false;
+    }
+    return false;
+}
+
+void startProcessThreads(Settings &settings, ThreadInfo &threadInfo)
+{
+    int processRequest=settings.numberOfThreads*3;
+
+    threadInfo.processRequests.resize(processRequest);
+    for(size_t i=0; i<processRequest; ++i)
+        threadInfo.freeRequest.push_back(&threadInfo.processRequests[i])
+
+    for(size_t i=0; i<settings.numberOfThreads; ++i)
+    {
+        threadInfo.threads.push_back(std::thread(processThread, settings, threadInfo));
+    }
+}
+
+void processThread(const Settings &settings, ThreadInfo &threadInfo)
 {
 	Alpr alpr;
 	cv::Mat frame;
 
-	alpr.setTopN(topn);
+	alpr.setTopN(settings.topn);
 
-	if (debug_mode)
+	if (settings.debug_mode)
 	{
 		alpr.getConfig()->setDebug(true);
 	}
 
-	if (detectRegion)
-		alpr.setDetectRegion(detectRegion);
+	if (settings.detectRegion)
+		alpr.setDetectRegion(settings.detectRegion);
 
 	if (templatePattern.empty() == false)
 		alpr.setDefaultRegion(templatePattern);
@@ -382,6 +572,61 @@ void processThread()
 		return 1;
 	}
 
+    ProcessRequest *request=nullptr;
+    timespec startTime;
+    timespec endTime;
+    std::vector<AlprRegionOfInterest> regionsOfInterest;
+    cv::Rect rectan;
+
+    while(threadInfo.running)
+    {
+        {
+            std::unique_lock<std::mutex> lock(threadInfo.processMutex);
+
+            if(request!=nullptr)
+            {
+                threadInfo.completed.push_back(request);
+                request=nullptr;
+            }
+
+            if(threadInfo.queued.empty())
+                threadInfo.processEvent.wait(lock);
+
+            request=threadInfo.queued.front();
+            threadInfo.queued.pop_front();
+        }
+
+        if(request==nullptr)
+            continue;
+
+        regionsOfInterest.clear();
+
+        getTimeMonotonic(&startTime);
+        if(settings.do_motiondetection)
+        {
+            rectan=motiondetector.MotionDetect(&request->frame);
+            if(rectan.width>0)
+                regionsOfInterest.push_back(AlprRegionOfInterest(rectan.x, rectan.y, rectan.width, rectan.height));
+        }
+        else 
+            regionsOfInterest.push_back(AlprRegionOfInterest(0, 0, request->frame.cols, request->frame.rows));
+        
+        if(regionsOfInterest.size()>0) 
+            request->results=alpr.recognize(request->frame.data, request->frame.elemSize(), request->frame.cols, request->frame.rows, regionsOfInterest);
+
+        getTimeMonotonic(&endTime);
+
+        request->processingTime=diffclock(startTime, endTime);
+    }
+
+    if(request != nullptr)
+    {
+        std::unique_lock<std::mutex> lock(threadInfo.processMutex);
+
+        threadInfo.completed.push_back(request);
+        threadInfo.inFlight--;
+        request=nullptr;
+    }
 }
 
 bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, bool outputJson, bool outputJsonFormated)
