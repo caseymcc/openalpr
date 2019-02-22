@@ -80,13 +80,13 @@ namespace alpr
     return impl->recognize(pixelData, bytesPerPixel, imgWidth, imgHeight, regionsOfInterest);
   }
 
-  std::string Alpr::toJson( AlprResults results, bool formated)
+  std::string Alpr::toJson( AlprResults results)
   {
-    return AlprImpl::toJson(results, formated);
+    return AlprImpl::toJson(results);
   }
-  std::string Alpr::toJson( AlprPlateResult result, bool formated)
+  std::string Alpr::toJson( AlprPlateResult result)
   {
-    return AlprImpl::toJson(result, formated);
+    return AlprImpl::toJson(result);
   }
 
   AlprResults Alpr::fromJson(std::string json) {

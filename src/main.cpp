@@ -42,6 +42,8 @@
 #include "motiondetector.h"
 #include "alpr.h"
 
+#include "cjson.h"
+
 using namespace alpr;
 
 const std::string MAIN_WINDOW_NAME = "ALPR main window";
@@ -57,6 +59,8 @@ bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, b
 bool detectandshow(Alpr* alpr, cv::Mat frame, std::string region, bool writeJson, bool formated=false, std::string jsonFile="");
 bool is_supported_image(std::string image_file);
 
+std::string toJson(const AlprResults results, bool formated);
+
 bool measureProcessingTime = false;
 std::string templatePattern;
 
@@ -64,6 +68,28 @@ std::string templatePattern;
 // so we can end infinite loops for things like video processing.
 bool program_active = true;
 int processedImages = 0;
+
+struct Settings
+{
+	Settings()
+	{
+		std::string configFile = "";
+		bool outputJson = false;
+		bool outputJsonFormated = false;
+		int seektoms = 0;
+		bool detectRegion = false;
+		std::string country;
+		int topn;
+		bool debug_mode = false;
+		int threads=1;
+	}
+};
+
+struct ProcessRequest
+{
+	cv::Mat frame;
+	AlprResults results;
+};
 
 int main( int argc, const char** argv )
 {
@@ -75,32 +101,32 @@ int main( int argc, const char** argv )
 #endif
 
   std::vector<std::string> filenames;
-  std::string configFile = "";
-  bool outputJson = false;
-  bool outputJsonFormated=false;
-  int seektoms = 0;
-  bool detectRegion = false;
-  std::string country;
-  int topn;
-  bool debug_mode = false;
+//  std::string configFile = "";
+//  bool outputJson = false;
+//  bool outputJsonFormated=false;
+//  int seektoms = 0;
+//  bool detectRegion = false;
+//  std::string country;
+//  int topn;
+//  bool debug_mode = false;
   
   TCLAP::CmdLine cmd("OpenAlpr Command Line Utility", ' ', Alpr::getVersion());
-
   TCLAP::UnlabeledMultiArg<std::string>  fileArg( "image_file", "Image containing license plates", true, "", "image_file_path"  );
+  TCLAP::ValueArg<std::string> countryCodeArg("c", "country", "Country code to identify (either us for USA or eu for Europe).  Default=us", false, "us", "country_code");
+  TCLAP::ValueArg<int> seekToMsArg("", "seek", "Seek to the specified millisecond in a video file. Default=0", false, 0, "integer_ms");
+  TCLAP::ValueArg<std::string> configFileArg("", "config", "Path to the openalpr.conf file", false, "", "config_file");
+  TCLAP::ValueArg<std::string> templatePatternArg("p", "pattern", "Attempt to match the plate number against a plate pattern (e.g., md for Maryland, ca for California)", false, "", "pattern code");
+  TCLAP::ValueArg<int> topNArg("n", "topn", "Max number of possible plate numbers to return.  Default=10", false, 10, "topN");
+  TCLAP::ValueArg<int> threads("t", "threads", "Number of threads to use.  Default=2", false, 2, "threads");
 
-  
-  TCLAP::ValueArg<std::string> countryCodeArg("c","country","Country code to identify (either us for USA or eu for Europe).  Default=us",false, "us" ,"country_code");
-  TCLAP::ValueArg<int> seekToMsArg("","seek","Seek to the specified millisecond in a video file. Default=0",false, 0 ,"integer_ms");
-  TCLAP::ValueArg<std::string> configFileArg("","config","Path to the openalpr.conf file",false, "" ,"config_file");
-  TCLAP::ValueArg<std::string> templatePatternArg("p","pattern","Attempt to match the plate number against a plate pattern (e.g., md for Maryland, ca for California)",false, "" ,"pattern code");
-  TCLAP::ValueArg<int> topNArg("n","topn","Max number of possible plate numbers to return.  Default=10",false, 10 ,"topN");
-
-  TCLAP::SwitchArg jsonSwitch("j","json","Output recognition results in JSON format.  Default=off", cmd, false);
+  TCLAP::SwitchArg jsonSwitch("j", "json", "Output recognition results in JSON format.  Default=off", cmd, false);
   TCLAP::SwitchArg jsonFormatedSwitch("f", "formated_json", "Output JSON results formated.  Default=off", cmd, false);
-  TCLAP::SwitchArg debugSwitch("","debug","Enable debug output.  Default=off", cmd, false);
-  TCLAP::SwitchArg detectRegionSwitch("d","detect_region","Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
-  TCLAP::SwitchArg clockSwitch("","clock","Measure/print the total time to process image and all plates.  Default=off", cmd, false);
+  TCLAP::SwitchArg debugSwitch("", "debug", "Enable debug output.  Default=off", cmd, false);
+  TCLAP::SwitchArg detectRegionSwitch("d", "detect_region", "Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
+  TCLAP::SwitchArg clockSwitch("", "clock", "Measure/print the total time to process image and all plates.  Default=off", cmd, false);
   TCLAP::SwitchArg motiondetect("", "motion", "Use motion detection on video file or stream.  Default=off", cmd, false);
+
+  Settings settings;
 
   try
   {
@@ -120,15 +146,15 @@ int main( int argc, const char** argv )
 
     filenames = fileArg.getValue();
 
-    country = countryCodeArg.getValue();
-    seektoms = seekToMsArg.getValue();
-    outputJson = jsonSwitch.getValue();
-    outputJsonFormated=jsonFormatedSwitch.getValue();
-    debug_mode = debugSwitch.getValue();
-    configFile = configFileArg.getValue();
-    detectRegion = detectRegionSwitch.getValue();
-    templatePattern = templatePatternArg.getValue();
-    topn = topNArg.getValue();
+    settings.country = countryCodeArg.getValue();
+    settings.seektoms = seekToMsArg.getValue();
+    settings.outputJson = jsonSwitch.getValue();
+    settings.outputJsonFormated=jsonFormatedSwitch.getValue();
+    settings.debug_mode = debugSwitch.getValue();
+    settings.configFile = configFileArg.getValue();
+    settings.detectRegion = detectRegionSwitch.getValue();
+    settings.templatePattern = templatePatternArg.getValue();
+    settings.topn = topNArg.getValue();
     measureProcessingTime = clockSwitch.getValue();
 	do_motiondetection = motiondetect.getValue();
   }
@@ -139,28 +165,28 @@ int main( int argc, const char** argv )
   }
 
   
-  cv::Mat frame;
-
-  Alpr alpr(country, configFile);
-  alpr.setTopN(topn);
+//  cv::Mat frame;
+//
+//  Alpr alpr(country, configFile);
+//  alpr.setTopN(topn);
+//  
+//  if (debug_mode)
+//  {
+//    alpr.getConfig()->setDebug(true);
+//  }
+//
+//  if (detectRegion)
+//    alpr.setDetectRegion(detectRegion);
+//
+//  if (templatePattern.empty() == false)
+//    alpr.setDefaultRegion(templatePattern);
+//
+//  if (alpr.isLoaded() == false)
+//  {
+//    std::cerr << "Error loading OpenALPR" << std::endl;
+//    return 1;
+//  }
   
-  if (debug_mode)
-  {
-    alpr.getConfig()->setDebug(true);
-  }
-
-  if (detectRegion)
-    alpr.setDetectRegion(detectRegion);
-
-  if (templatePattern.empty() == false)
-    alpr.setDefaultRegion(templatePattern);
-
-  if (alpr.isLoaded() == false)
-  {
-    std::cerr << "Error loading OpenALPR" << std::endl;
-    return 1;
-  }
-
   for (unsigned int i = 0; i < filenames.size(); i++)
   {
 //	  if (processedImages > 10)
@@ -330,6 +356,34 @@ int main( int argc, const char** argv )
   return 0;
 }
 
+void pr
+
+void processThread()
+{
+	Alpr alpr;
+	cv::Mat frame;
+
+	alpr.setTopN(topn);
+
+	if (debug_mode)
+	{
+		alpr.getConfig()->setDebug(true);
+	}
+
+	if (detectRegion)
+		alpr.setDetectRegion(detectRegion);
+
+	if (templatePattern.empty() == false)
+		alpr.setDefaultRegion(templatePattern);
+
+	if (alpr.isLoaded() == false)
+	{
+		std::cerr << "Error loading OpenALPR" << std::endl;
+		return 1;
+	}
+
+}
+
 bool processImageDirectory(Alpr &alpr, cv::Mat &frame, std::string &directory, bool outputJson, bool outputJsonFormated)
 {
     std::vector<std::string> files=getFilesInDir(directory.c_str());
@@ -400,7 +454,7 @@ bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJso
 
   if (writeJson)
   {
-    std::string json=alpr->toJson(results, formated);
+    std::string json=toJson(results, formated);
     std::cout << json << std::endl;
 
     if(!jsonFile.empty())
@@ -446,3 +500,128 @@ bool detectandshow( Alpr* alpr, cv::Mat frame, std::string region, bool writeJso
   return results.plates.size() > 0;
 }
 
+cJSON* toJsonObj(const AlprPlateResult* result)
+{
+	cJSON *root, *coords, *candidates, *characters;
+
+	root = cJSON_CreateObject();
+
+	cJSON_AddStringToObject(root, "plate", result->bestPlate.characters.c_str());
+	cJSON_AddNumberToObject(root, "confidence", result->bestPlate.overall_confidence);
+	cJSON_AddNumberToObject(root, "matches_template", result->bestPlate.matches_template);
+
+	cJSON_AddNumberToObject(root, "plate_index", result->plate_index);
+
+	cJSON_AddStringToObject(root, "region", result->region.c_str());
+	cJSON_AddNumberToObject(root, "region_confidence", result->regionConfidence);
+
+	cJSON_AddNumberToObject(root, "processing_time_ms", result->processing_time_ms);
+	cJSON_AddNumberToObject(root, "requested_topn", result->requested_topn);
+
+	cJSON_AddItemToObject(root, "coordinates", coords = cJSON_CreateArray());
+	for (int i = 0; i < 4; i++)
+	{
+		cJSON *coords_object;
+		coords_object = cJSON_CreateObject();
+		cJSON_AddNumberToObject(coords_object, "x", result->plate_points[i].x);
+		cJSON_AddNumberToObject(coords_object, "y", result->plate_points[i].y);
+
+		cJSON_AddItemToArray(coords, coords_object);
+	}
+
+
+	cJSON_AddItemToObject(root, "candidates", candidates = cJSON_CreateArray());
+	for (unsigned int i = 0; i < result->topNPlates.size(); i++)
+	{
+		cJSON *candidate_object;
+		const AlprPlate &plate = result->topNPlates[i];
+
+		candidate_object = cJSON_CreateObject();
+		cJSON_AddStringToObject(candidate_object, "plate", plate.characters.c_str());
+		cJSON_AddNumberToObject(candidate_object, "confidence", plate.overall_confidence);
+		cJSON_AddNumberToObject(candidate_object, "matches_template", plate.matches_template);
+
+		cJSON_AddItemToObject(candidate_object, "characters", characters = cJSON_CreateArray());
+		for (unsigned int j = 0; j < plate.character_details.size(); j++)
+		{
+			cJSON *char_object, *coords;
+			const AlprChar &character_details = plate.character_details[j];
+
+			char_object = cJSON_CreateObject();
+
+			cJSON_AddStringToObject(char_object, "character", character_details.character.c_str());
+			cJSON_AddNumberToObject(char_object, "confidence", character_details.confidence);
+
+			cJSON_AddItemToObject(char_object, "coordinates", coords = cJSON_CreateArray());
+			for (int k = 0; k < 4; k++)
+			{
+				cJSON *coords_object;
+				const AlprCoordinate &alpr_coords = character_details.corners[k];
+
+				coords_object = cJSON_CreateObject();
+				cJSON_AddNumberToObject(coords_object, "x", alpr_coords.x);
+				cJSON_AddNumberToObject(coords_object, "y", alpr_coords.y);
+
+				cJSON_AddItemToArray(coords, coords_object);
+			}
+			cJSON_AddItemToArray(characters, char_object);
+		}
+
+		cJSON_AddItemToArray(candidates, candidate_object);
+	}
+
+	return root;
+}
+
+std::string toJson(const AlprResults results, bool formated)
+{
+	cJSON *root, *jsonResults;
+	root = cJSON_CreateObject();
+
+
+	cJSON_AddNumberToObject(root, "version", 2);
+	cJSON_AddStringToObject(root, "data_type", "alpr_results");
+
+	cJSON_AddNumberToObject(root, "epoch_time", results.epoch_time);
+	cJSON_AddNumberToObject(root, "img_width", results.img_width);
+	cJSON_AddNumberToObject(root, "img_height", results.img_height);
+	cJSON_AddNumberToObject(root, "processing_time_ms", results.total_processing_time_ms);
+
+	// Add the regions of interest to the JSON
+	cJSON *rois;
+	cJSON_AddItemToObject(root, "regions_of_interest", rois = cJSON_CreateArray());
+	for (unsigned int i = 0; i < results.regionsOfInterest.size(); i++)
+	{
+		cJSON *roi_object;
+		roi_object = cJSON_CreateObject();
+		cJSON_AddNumberToObject(roi_object, "x", results.regionsOfInterest[i].x);
+		cJSON_AddNumberToObject(roi_object, "y", results.regionsOfInterest[i].y);
+		cJSON_AddNumberToObject(roi_object, "width", results.regionsOfInterest[i].width);
+		cJSON_AddNumberToObject(roi_object, "height", results.regionsOfInterest[i].height);
+
+		cJSON_AddItemToArray(rois, roi_object);
+	}
+
+
+	cJSON_AddItemToObject(root, "results", jsonResults = cJSON_CreateArray());
+	for (unsigned int i = 0; i < results.plates.size(); i++)
+	{
+		cJSON *resultObj = toJsonObj(&results.plates[i]);
+		cJSON_AddItemToArray(jsonResults, resultObj);
+	}
+
+	// Print the JSON object to a string and return
+	char *out;
+
+	if (formated)
+		out = cJSON_Print(root);
+	else
+		out = cJSON_PrintUnformatted(root);
+
+	cJSON_Delete(root);
+
+	std::string response(out);
+
+	free(out);
+	return response;
+}

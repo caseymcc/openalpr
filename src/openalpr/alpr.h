@@ -161,8 +161,8 @@ namespace alpr
       AlprResults recognize(unsigned char* pixelData, int bytesPerPixel, int imgWidth, int imgHeight, std::vector<AlprRegionOfInterest> regionsOfInterest);
 
 
-      static std::string toJson(const AlprResults results, bool formated=false);
-      static std::string toJson(const AlprPlateResult result, bool formated=false);
+      static std::string toJson(const AlprResults results);
+      static std::string toJson(const AlprPlateResult result);
       static AlprResults fromJson(std::string json);
 
       bool isLoaded();

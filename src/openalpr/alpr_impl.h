@@ -99,8 +99,8 @@ namespace alpr
       void setTopN(int topn);
       void setDefaultRegion(std::string region);
 
-      static std::string toJson( const AlprResults results, bool formated=false);
-      static std::string toJson( const AlprPlateResult result, bool formated=false);
+      static std::string toJson( const AlprResults results);
+      static std::string toJson( const AlprPlateResult result);
       
       static AlprResults fromJson(std::string json);
       static std::string getVersion();

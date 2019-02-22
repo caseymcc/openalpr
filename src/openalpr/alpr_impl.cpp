@@ -492,7 +492,7 @@ namespace alpr
      return rectRegions;
    }
 
-  string AlprImpl::toJson( const AlprResults results, bool formated )
+  string AlprImpl::toJson( const AlprResults results)
   {
     cJSON *root, *jsonResults;
     root = cJSON_CreateObject();
@@ -530,12 +530,7 @@ namespace alpr
     }
 
     // Print the JSON object to a string and return
-    char *out;
-
-    if(formated)
-        out=cJSON_Print(root);
-    else
-        out=cJSON_PrintUnformatted(root);
+    char *out=cJSON_PrintUnformatted(root);
 
     cJSON_Delete(root);
 
@@ -547,16 +542,11 @@ namespace alpr
 
 
 
-  std::string AlprImpl::toJson( const AlprPlateResult result, bool formated)
+  std::string AlprImpl::toJson( const AlprPlateResult result)
   {
     cJSON *resultObj = createJsonObj( &result );
     
-    char *out;
-
-    if(formated)
-        out=cJSON_Print(resultObj);
-    else
-        out=cJSON_PrintUnformatted(resultObj);
+    char *out=cJSON_PrintUnformatted(resultObj);
 
     cJSON_Delete(resultObj);
 
