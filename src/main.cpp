@@ -84,6 +84,7 @@ struct Settings
     std::string configFile;
     bool outputJson;
     bool outputJsonFormated;
+	bool skipProcessed;
     int seektoms;
     bool detectRegion;
     std::string country;
@@ -178,6 +179,7 @@ int main(int argc, const char** argv)
     TCLAP::ValueArg<int> numberOfThreads("t", "threads", "Number of threads to use.  Default=1", false, 1, "threads");
 
     TCLAP::SwitchArg jsonSwitch("j", "json", "Output recognition results in JSON format.  Default=off", cmd, false);
+	TCLAP::SwitchArg skipSwitch("s", "skip", "Skip images with json files.  Default=off", cmd, false);
     TCLAP::SwitchArg jsonFormatedSwitch("f", "formated_json", "Output JSON results formated.  Default=off", cmd, false);
     TCLAP::SwitchArg debugSwitch("", "debug", "Enable debug output.  Default=off", cmd, false);
     TCLAP::SwitchArg detectRegionSwitch("d", "detect_region", "Attempt to detect the region of the plate image.  [Experimental]  Default=off", cmd, false);
@@ -205,6 +207,7 @@ int main(int argc, const char** argv)
         settings.country=countryCodeArg.getValue();
         settings.seektoms=seekToMsArg.getValue();
         settings.outputJson=jsonSwitch.getValue();
+		settings.skipProcessed = skipSwitch.getValue();
         settings.outputJsonFormated=jsonFormatedSwitch.getValue();
         settings.debug_mode=debugSwitch.getValue();
         settings.configFile=configFileArg.getValue();
@@ -592,6 +595,14 @@ bool getDirectory(const Settings &settings, DirectoryState *state, std::string &
 
         if(is_supported_image(fullpath))
         {
+			if(settings.skipProcessed)
+			{
+				std::string jsonFile=currentDirectory+"/"+ filenameWithoutExtension(file) +".json";
+
+	            if(fileExists(jsonFile.c_str()))
+		            continue;
+
+			}
             request->frame=cv::imread(fullpath.c_str());
 
             if(request->frame.data==NULL)
